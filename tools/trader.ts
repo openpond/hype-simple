@@ -498,7 +498,7 @@ export async function POST(req: Request): Promise<Response> {
       organizationId: process.env.TURNKEY_ORGANIZATION_ID!,
       apiPublicKey: process.env.TURNKEY_API_PUBLIC_KEY!,
       apiPrivateKey: process.env.TURNKEY_API_PRIVATE_KEY!,
-      signWith: process.env.TURNKEY_SIGN_WITH as `0x${string}`,
+      signWith: process.env.TURNKEY_WALLET_ADDRESS as `0x${string}`,
     },
   });
 
