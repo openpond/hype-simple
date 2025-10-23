@@ -2,14 +2,16 @@ export const metadata = {
   // Core metadata fields (top-level in registry.json)
   name: "opentool-example",
   displayName: "OpenTool Example Agent",
-  description: "A demonstration agent showcasing basic OpenTool capabilities with mathematical operations",
+  description:
+    "A demonstration agent showcasing basic OpenTool capabilities with mathematical operations",
   version: "1.0.0",
+  chains: ["999", "998"],
   author: "OpenPond",
   website: "https://opentool.dev",
   repository: "https://github.com/openpond/opentool",
   category: "example", // Single category for top-level field
   termsOfService: "Please review terms before use.",
-  // Payment configuration  
+  // Payment configuration
   payment: {
     amountUSDC: 0.001,
     description: "Very low cost example tools for learning and testing",
@@ -20,7 +22,7 @@ export const metadata = {
     chainIds: [8453],
     facilitator: "opentool",
   },
-  
+
   discovery: {
     keywords: ["example", "demo", "tutorial", "basic", "math"],
     category: "education",
@@ -28,30 +30,30 @@ export const metadata = {
       "Learning how to build MCP tools with OpenTool",
       "Template for creating new OpenTool projects",
       "Demonstrating basic tool functionality",
-      "Testing deployment and registration workflows"
+      "Testing deployment and registration workflows",
     ],
     capabilities: [
       "mathematical-operations",
       "basic-interactions",
-      "educational-examples"
+      "educational-examples",
     ],
     requirements: {
       authentication: [],
       permissions: [],
       dependencies: [],
-      minimumInputs: ["varies by tool"]
+      minimumInputs: ["varies by tool"],
     },
     pricing: {
       model: "pay-per-use",
       defaultAmount: 0.001,
-      description: "Very low cost example tools for learning and testing"
+      description: "Very low cost example tools for learning and testing",
     },
     compatibility: {
       platforms: ["web", "mobile", "server", "cli"],
       languages: ["any"],
       frameworks: ["mcp", "opentool"],
-      regions: ["global"]
-    }
+      regions: ["global"],
+    },
   },
 
   // New UI Enhancement fields
@@ -59,10 +61,10 @@ export const metadata = {
     "Calculate the square root of 144",
     "Add 25 and 37 together",
     "What's 15 multiplied by 8?",
-    "Help me solve: (10 + 5) * 3"
+    "Help me solve: (10 + 5) * 3",
   ],
   iconPath: "/icons/calculator.svg",
   videoPath: "/videos/opentool-demo.mp4",
   image: "/icons/calculator.svg",
-  animation_url: "/videos/opentool-demo.mp4"
+  animation_url: "/videos/opentool-demo.mp4",
 };
