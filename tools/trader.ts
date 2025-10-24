@@ -20,6 +20,7 @@ export async function POST(req: Request): Promise<Response> {
       signWith: process.env.TURNKEY_WALLET_ADDRESS as `0x${string}`,
     },
   });
+  console.log(process.env.TEST_API_KEY);
 
   // Execute with Hyperliquid (simple market-like IOC)
   let tradeTaken = false;
