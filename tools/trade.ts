@@ -13,7 +13,7 @@ const decimalString = z
   .min(1, "value is required")
   .refine((v) => /^\d+(?:\.\d+)?$/.test(v), "must be a decimal string");
 
-const schema = z.object({
+export const schema = z.object({
   symbol: z.string().min(1, "symbol is required"),
   side: z.enum(["buy", "sell"]),
   price: decimalString,
