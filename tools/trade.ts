@@ -1,7 +1,7 @@
 import { store } from "opentool/store";
 import { wallet } from "opentool/wallet";
 import { z } from "zod";
-import { placeHyperliquidOrder } from "../utils";
+import { placeHyperliquidOrder } from "../src/utils";
 
 function resolveChainConfig(environment: "mainnet" | "testnet") {
   return environment === "mainnet"
