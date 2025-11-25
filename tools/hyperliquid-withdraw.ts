@@ -1,12 +1,15 @@
 import { z } from "zod";
 import { store } from "opentool/store";
 import { wallet } from "opentool/wallet";
-import { withdrawFromHyperliquid } from "../utils";
+import { withdrawFromHyperliquid } from "../src/utils";
 
 function resolveChainConfig(environment: "mainnet" | "testnet") {
   return environment === "mainnet"
     ? { chain: "arbitrum", rpcUrl: process.env.ARBITRUM_RPC_URL }
-    : { chain: "arbitrum-sepolia", rpcUrl: process.env.ARBITRUM_SEPOLIA_RPC_URL };
+    : {
+        chain: "arbitrum-sepolia",
+        rpcUrl: process.env.ARBITRUM_SEPOLIA_RPC_URL,
+      };
 }
 
 export const profile = {
@@ -24,7 +27,10 @@ export const schema = z.object({
   destination: z
     .string()
     .min(1, "destination is required")
-    .refine((v) => /^0x[a-fA-F0-9]{40}$/.test(v), "destination must be a hex address"),
+    .refine(
+      (v) => /^0x[a-fA-F0-9]{40}$/.test(v),
+      "destination must be a hex address"
+    ),
   environment: z.enum(["mainnet", "testnet"]).default("testnet"),
 });
 

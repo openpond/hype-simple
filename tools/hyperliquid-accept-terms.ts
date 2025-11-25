@@ -5,7 +5,10 @@ import { wallet } from "opentool/wallet";
 function resolveChainConfig(environment: "mainnet" | "testnet") {
   return environment === "mainnet"
     ? { chain: "arbitrum", rpcUrl: process.env.ARBITRUM_RPC_URL }
-    : { chain: "arbitrum-sepolia", rpcUrl: process.env.ARBITRUM_SEPOLIA_RPC_URL };
+    : {
+        chain: "arbitrum-sepolia",
+        rpcUrl: process.env.ARBITRUM_SEPOLIA_RPC_URL,
+      };
 }
 
 export const profile = {
@@ -45,8 +48,7 @@ export async function POST(req: Request): Promise<Response> {
     metadata: {
       environment,
       termsVersion: termsVersion ?? null,
-      note:
-        "Hyperliquid does not expose a terms endpoint; this records local acknowledgement only.",
+      note: "Hyperliquid does not expose a terms endpoint; this records local acknowledgement only.",
     },
   });
 
@@ -56,7 +58,6 @@ export async function POST(req: Request): Promise<Response> {
     walletAddress,
     termsAccepted: true,
     termsVersion: termsVersion ?? null,
-    note:
-      "Hyperliquid does not expose a terms endpoint; this records local acknowledgement only.",
+    note: "Hyperliquid does not expose a terms endpoint; this records local acknowledgement only.",
   });
 }

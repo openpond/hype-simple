@@ -13,7 +13,7 @@
     "@noble/hashes": "^1.5.0",
     "@turnkey/sdk-server": "^1.2.3",
     "@turnkey/viem": "^0.4.3",
-    "opentool": "0.7.13",
+    "opentool": "0.7.14",
     "viem": "^2.9.8"
   },
   "devDependencies": {

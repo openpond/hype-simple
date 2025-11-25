@@ -4,12 +4,15 @@ import { wallet } from "opentool/wallet";
 import {
   depositToHyperliquidBridge,
   fetchHyperliquidClearinghouseState,
-} from "../utils";
+} from "../src/utils";
 
 function resolveChainConfig(environment: "mainnet" | "testnet") {
   return environment === "mainnet"
     ? { chain: "arbitrum", rpcUrl: process.env.ARBITRUM_RPC_URL }
-    : { chain: "arbitrum-sepolia", rpcUrl: process.env.ARBITRUM_SEPOLIA_RPC_URL };
+    : {
+        chain: "arbitrum-sepolia",
+        rpcUrl: process.env.ARBITRUM_SEPOLIA_RPC_URL,
+      };
 }
 
 export const profile = {

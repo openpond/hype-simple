@@ -647,9 +647,7 @@ export async function withdrawFromHyperliquid(options: {
   }
 
   if (!wallet.account || !wallet.walletClient) {
-    throw new Error(
-      "Wallet with signing capability is required for withdraw."
-    );
+    throw new Error("Wallet with signing capability is required for withdraw.");
   }
 
   const signatureChainId = getSignatureChainId(environment);
@@ -712,9 +710,11 @@ export async function withdrawFromHyperliquid(options: {
     body: JSON.stringify(payload),
   });
 
-  const json = (await response.json().catch(() => null)) as
-    | { status?: string; response?: unknown; error?: string }
-    | null;
+  const json = (await response.json().catch(() => null)) as {
+    status?: string;
+    response?: unknown;
+    error?: string;
+  } | null;
 
   if (!response.ok || json?.status !== "ok") {
     throw new Error(
@@ -744,9 +744,10 @@ export async function fetchHyperliquidClearinghouseState(params: {
     body: JSON.stringify({ type: "clearinghouseState", user: walletAddress }),
   });
 
-  const data = (await response.json().catch(() => null)) as
-    | Record<string, unknown>
-    | null;
+  const data = (await response.json().catch(() => null)) as Record<
+    string,
+    unknown
+  > | null;
 
   return {
     ok: response.ok,
