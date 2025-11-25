@@ -1,103 +1,63 @@
-# Full Metadata OpenTool Example
+# Hyperliquid Utility OpenTool
 
-This example demonstrates a complete OpenTool project with metadata configuration, calculator utilities, and several AI-powered endpoints built on the `opentool/ai` package.
+Utility OpenTool project for Hyperliquid: create the HL user (via deposit/bridge), check clearinghouse status, record local terms acknowledgment, and withdraw funds. Uses `opentool/wallet` for signing and `opentool/store` for persistence.
 
-## Files
+## Tools
 
-- `tools/calculate.ts` – Calculator with discovery metadata and 402 payments
-- `tools/ai-summarize.ts` – Summary generator using `generateText`
-- `tools/ai-research.ts` – Research assistant with auto web search tool calling
-- `tools/ai-code-suggestion.ts` – Code snippet drafter with configurable constraints
-- `tools/ai-streaming-outline.ts` – Streaming outline generator demonstrating `streamText`
-- `metadata.ts` – Complete metadata configuration
-- `package.json` – Project configuration
-- `dist/` – Generated files after build
+- `tools/hyperliquid-status.ts` – Check clearinghouse state (confirms HL user exists).
+- `tools/hyperliquid-accept-terms.ts` – Record local acknowledgment of HL API terms (HL has no terms API).
+- `tools/hyperliquid-deposit.ts` – Bridge USDC to HL (creates user on first deposit).
+- `tools/hyperliquid-withdraw.ts` – Withdraw USDC from HL via `withdraw3`.
+- `tools/trade.ts` – Place Hyperliquid perp order (IOC by default).
+- `metadata.ts` – Project metadata.
+- `utils.ts` – Shared HL helpers (signing, deposit/withdraw, clearinghouse fetch).
+
+## Env Vars (required)
+
+- `TURNKEY_ORGANIZATION_ID`, `TURNKEY_API_PUBLIC_KEY`, `TURNKEY_API_PRIVATE_KEY`, `TURNKEY_WALLET_ADDRESS`
+- RPC: `ARBITRUM_RPC_URL` (mainnet), `ARBITRUM_SEPOLIA_RPC_URL` (testnet)
+
+Optional overrides: `HYPERLIQUID_BRIDGE_ADDRESS`, `HYPERLIQUID_USDC_ADDRESS`, `HYPERLIQUID_SIGNATURE_CHAIN_ID`.
 
 ## Quick Start
 
-1. **Create your environment file:**
-   ```bash
-   cp .env.example .env
-   ```
-   Update the copied file with your own Turnkey, 0x, and Alchemy credentials before running the tooling.
+```bash
+npm install
+npm run dev
+# dev server at http://localhost:7000
+```
 
-1. **Install dependencies:**
-   ```bash
-   npm install
-   ```
+## Curl Examples (testnet)
 
-1. **Build the project:**
-   ```bash
-   npm run build
-   ```
-
-1. **Test locally with MCP Inspector:**
-   ```bash
-   npx @modelcontextprotocol/inspector node dist/mcp-server.js
-   ```
-
-## Features
-
-This example showcases:
-
-- **Custom metadata** – Project information, categories, and discovery data
-- **Tool annotations** – Enhanced tool descriptions and capabilities
-- **Payment configuration** – Optional monetization settings
-- **Complex tool schemas** – Mathematical operations with validation
-- **AI integrations** – Non-streaming calls to `https://gateway.openpond.dev` with optional model overrides
-- **Web search usage** – Automatic inclusion of the OpenPond `websearch` function tool
-- **Streaming demo** – Live SSE handling with incremental text, reasoning, and usage callbacks
-
-## Generated Files
-
-After building, you'll find these files in `dist/`:
-
-- **`mcp-server.js`** - stdio MCP server for Node/Lambda execution
-- **`metadata.json`** - Complete tool and project metadata (spec `v1.0.0`)
-- **`tools/calculate.js`** - Compiled calculator tool
-
-## Testing
-
-Use the MCP Inspector to test tools. Examples:
-
-- **Calculator:**
-  ```json
-  {
-    "operation": "add",
-    "a": 10,
-    "b": 5
-  }
+- Status:
+  ```bash
+  curl -X POST http://localhost:7000/hyperliquid-status \
+    -H "Content-Type: application/json" \
+    -d '{"environment":"testnet"}'
   ```
-- **AI summary:**
-  ```json
-  {
-    "topic": "OpenTool AI package release",
-    "tone": "enthusiastic"
-  }
+- Accept terms (local record only):
+  ```bash
+  curl -X POST http://localhost:7000/hyperliquid-accept-terms \
+    -H "Content-Type: application/json" \
+    -d '{"environment":"testnet","termsVersion":"v1"}'
   ```
-- **AI research:**
-  ```json
-  {
-    "query": "Recent Model Context Protocol updates",
-    "maxResults": 3
-  }
+- Deposit (creates HL user on first deposit, min 5 USDC):
+  ```bash
+  curl -X POST http://localhost:7000/hyperliquid-deposit \
+    -H "Content-Type: application/json" \
+    -d '{"environment":"testnet","amount":"5.5"}'
   ```
-- **Streaming outline:**
-  ```json
-  {
-    "topic": "OpenTool AI package launch",
-    "bulletCount": 5,
-    "includeSummary": true
-  }
+- Withdraw:
+  ```bash
+  curl -X POST http://localhost:7000/hyperliquid-withdraw \
+    -H "Content-Type: application/json" \
+    -d '{"environment":"testnet","amount":"1","destination":"0x..."}'
+  ```
+- Place order:
+  ```bash
+  curl -X POST http://localhost:7000/trade \
+    -H "Content-Type: application/json" \
+    -d '{"symbol":"BTC","side":"buy","price":"10000","size":"0.01","tif":"Ioc"}'
   ```
 
-Set `OPENPOND_GATEWAY_URL` or `OPENPOND_API_KEY` in your environment if you need to target a custom gateway or authenticated provider.
-
-## Metadata Configuration
-
-The `metadata.ts` file demonstrates how to configure:
-
-- Project information and branding
-- Tool categories and discovery
-- Payment and monetization settings
-- Compatibility requirements
+For mainnet, set `"environment":"mainnet"` and ensure RPC/bridge funds are on Arbitrum One.

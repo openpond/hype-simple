@@ -1,6 +1,15 @@
 import { encode as encodeMsgpack } from "@msgpack/msgpack";
 import { keccak_256 } from "@noble/hashes/sha3";
 import { bytesToHex, concatBytes, hexToBytes } from "@noble/hashes/utils";
+import {
+  createPublicClient,
+  createWalletClient,
+  encodeFunctionData,
+  erc20Abi,
+  http,
+  parseUnits,
+} from "viem";
+import { arbitrum, arbitrumSepolia } from "viem/chains";
 import type { WalletFullContext } from "opentool/wallet";
 
 const API_BASES = {
@@ -16,6 +25,35 @@ const EXCHANGE_TYPED_DATA_DOMAIN = {
 };
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
+
+const HL_ENDPOINT = {
+  mainnet: "https://api.hyperliquid.xyz",
+  testnet: "https://api.hyperliquid-testnet.xyz",
+} as const satisfies Record<HyperliquidEnvironment, string>;
+
+const HL_CHAIN_LABEL = {
+  mainnet: "Mainnet",
+  testnet: "Testnet",
+} as const satisfies Record<HyperliquidEnvironment, string>;
+
+const HL_BRIDGE_ADDRESSES: Record<HyperliquidEnvironment, `0x${string}`> = {
+  mainnet: "0x2df1c51e09aecf9cacb7bc98cb1742757f163df7",
+  testnet: "0x08cfc1b6b2dcf36a1480b99353a354aa8ac56f89",
+};
+
+const HL_USDC_ADDRESSES: Record<HyperliquidEnvironment, `0x${string}`> = {
+  mainnet: "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+  testnet: "0x1baAbB04529D43a73232B713C0FE471f7c7334d5",
+};
+
+const HL_SIGNATURE_CHAIN_ID = {
+  mainnet: "0xa4b1",
+  testnet: "0x66eee",
+} as const satisfies Record<HyperliquidEnvironment, string>;
+
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
+
+const MIN_DEPOSIT_USDC = 5;
 
 const metaCache = new Map<
   string,
@@ -141,6 +179,27 @@ type ExchangeRequestBody = {
   vaultAddress?: `0x${string}`;
   expiresAfter?: number;
 };
+
+export interface HyperliquidDepositResult {
+  txHash: `0x${string}`;
+  amount: number;
+  amountUnits: string;
+  environment: HyperliquidEnvironment;
+  bridgeAddress: `0x${string}`;
+}
+
+export interface HyperliquidWithdrawResult {
+  amount: number;
+  destination: `0x${string}`;
+  environment: HyperliquidEnvironment;
+  nonce: number;
+  status: string;
+}
+
+export interface HyperliquidClearinghouseState {
+  ok: boolean;
+  data: Record<string, unknown> | null;
+}
 
 /**
  * Sign and submit one or more orders to the Hyperliquid exchange endpoint.
@@ -479,4 +538,218 @@ function toUint64Bytes(value: number): Uint8Array {
   const bytes = new Uint8Array(8);
   new DataView(bytes.buffer).setBigUint64(0, BigInt(value));
   return bytes;
+}
+
+function resolveRpcUrl(env: HyperliquidEnvironment) {
+  if (env === "mainnet") {
+    return process.env.ARBITRUM_RPC_URL ?? "https://arb1.arbitrum.io/rpc";
+  }
+  return (
+    process.env.ARBITRUM_SEPOLIA_RPC_URL ??
+    "https://sepolia-rollup.arbitrum.io/rpc"
+  );
+}
+
+function getBridgeAddress(env: HyperliquidEnvironment): `0x${string}` {
+  const override = process.env.HYPERLIQUID_BRIDGE_ADDRESS;
+  if (override?.trim()) {
+    return normalizeAddress(override as `0x${string}`);
+  }
+  return HL_BRIDGE_ADDRESSES[env];
+}
+
+function getUsdcAddress(env: HyperliquidEnvironment): `0x${string}` {
+  const override = process.env.HYPERLIQUID_USDC_ADDRESS;
+  if (override?.trim()) {
+    return normalizeAddress(override as `0x${string}`);
+  }
+  return HL_USDC_ADDRESSES[env];
+}
+
+function getSignatureChainId(env: HyperliquidEnvironment): string {
+  const override = process.env.HYPERLIQUID_SIGNATURE_CHAIN_ID;
+  const selected = override?.trim() || HL_SIGNATURE_CHAIN_ID[env];
+  return normalizeHex(selected as `0x${string}`);
+}
+
+export async function depositToHyperliquidBridge(options: {
+  environment: HyperliquidEnvironment;
+  amount: string;
+  wallet: WalletFullContext;
+}): Promise<HyperliquidDepositResult> {
+  const { environment, amount, wallet } = options;
+  const parsedAmount = Number(amount);
+  if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+    throw new Error("Deposit amount must be a positive number.");
+  }
+  if (parsedAmount < MIN_DEPOSIT_USDC) {
+    throw new Error(`Minimum deposit is ${MIN_DEPOSIT_USDC} USDC.`);
+  }
+
+  if (!wallet.account || !wallet.walletClient) {
+    throw new Error("Wallet with signing capability is required for deposit.");
+  }
+
+  const rpcUrl = resolveRpcUrl(environment);
+  const chain = environment === "mainnet" ? arbitrum : arbitrumSepolia;
+
+  const bridgeAddress = getBridgeAddress(environment);
+  const usdcAddress = getUsdcAddress(environment);
+  const amountUnits = parseUnits(amount, 6);
+
+  const walletClient =
+    wallet.walletClient ??
+    createWalletClient({
+      account: wallet.account,
+      chain,
+      transport: http(rpcUrl),
+    });
+
+  const transport = walletClient.transport ?? http(rpcUrl);
+  const publicClient = createPublicClient({
+    chain: walletClient.chain ?? chain,
+    transport,
+  });
+
+  const data = encodeFunctionData({
+    abi: erc20Abi,
+    functionName: "transfer",
+    args: [bridgeAddress, amountUnits],
+  });
+
+  const txHash = await walletClient.sendTransaction({
+    account: wallet.account,
+    to: usdcAddress,
+    data,
+  });
+
+  await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+  return {
+    txHash,
+    amount: parsedAmount,
+    amountUnits: amountUnits.toString(),
+    environment,
+    bridgeAddress,
+  };
+}
+
+export async function withdrawFromHyperliquid(options: {
+  environment: HyperliquidEnvironment;
+  amount: string;
+  destination: `0x${string}`;
+  wallet: WalletFullContext;
+}): Promise<HyperliquidWithdrawResult> {
+  const { environment, amount, destination, wallet } = options;
+  const parsedAmount = Number(amount);
+  if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+    throw new Error("Withdraw amount must be a positive number.");
+  }
+
+  if (!wallet.account || !wallet.walletClient) {
+    throw new Error(
+      "Wallet with signing capability is required for withdraw."
+    );
+  }
+
+  const signatureChainId = getSignatureChainId(environment);
+  const hyperliquidChain = HL_CHAIN_LABEL[environment];
+
+  const domain = {
+    name: "HyperliquidSignTransaction",
+    version: "1",
+    chainId: Number.parseInt(signatureChainId, 16),
+    verifyingContract: ZERO_ADDRESS,
+  } as const;
+
+  const time = BigInt(Date.now());
+  const nonce = Number(time);
+  const normalizedDestination = normalizeAddress(destination);
+
+  const message = {
+    hyperliquidChain,
+    destination: normalizedDestination,
+    amount: parsedAmount.toString(),
+    time,
+  };
+
+  const types = {
+    "HyperliquidTransaction:Withdraw": [
+      { name: "hyperliquidChain", type: "string" },
+      { name: "destination", type: "string" },
+      { name: "amount", type: "string" },
+      { name: "time", type: "uint64" },
+    ],
+  } as const;
+
+  const signatureHex = await wallet.walletClient.signTypedData({
+    account: wallet.account,
+    domain,
+    types,
+    primaryType: "HyperliquidTransaction:Withdraw",
+    message,
+  });
+
+  const signature = splitSignature(signatureHex);
+
+  const payload = {
+    action: {
+      type: "withdraw3",
+      signatureChainId,
+      hyperliquidChain,
+      destination: normalizedDestination,
+      amount: parsedAmount.toString(),
+      time: nonce,
+    },
+    nonce,
+    signature,
+  };
+
+  const endpoint = `${HL_ENDPOINT[environment]}/exchange`;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  const json = (await response.json().catch(() => null)) as
+    | { status?: string; response?: unknown; error?: string }
+    | null;
+
+  if (!response.ok || json?.status !== "ok") {
+    throw new Error(
+      `Hyperliquid withdraw failed: ${
+        json?.response ?? json?.error ?? response.statusText
+      }`
+    );
+  }
+
+  return {
+    amount: parsedAmount,
+    destination: normalizedDestination,
+    environment,
+    nonce,
+    status: json.status ?? "ok",
+  };
+}
+
+export async function fetchHyperliquidClearinghouseState(params: {
+  environment: HyperliquidEnvironment;
+  walletAddress: `0x${string}`;
+}): Promise<HyperliquidClearinghouseState> {
+  const { environment, walletAddress } = params;
+  const response = await fetch(`${HL_ENDPOINT[environment]}/info`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ type: "clearinghouseState", user: walletAddress }),
+  });
+
+  const data = (await response.json().catch(() => null)) as
+    | Record<string, unknown>
+    | null;
+
+  return {
+    ok: response.ok,
+    data,
+  };
 }
