@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { store } from "opentool/store";
 import { wallet } from "opentool/wallet";
-import { fetchHyperliquidClearinghouseState } from "../utils";
+import { fetchHyperliquidClearinghouseState } from "../src/utils";
 
 function resolveChainConfig(environment: "mainnet" | "testnet") {
   // opentool/wallet supports base + base-sepolia; we use those to obtain the signer,
