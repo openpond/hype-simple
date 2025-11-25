@@ -1,14 +1,7 @@
 import { encode as encodeMsgpack } from "@msgpack/msgpack";
 import { keccak_256 } from "@noble/hashes/sha3";
 import { bytesToHex, concatBytes, hexToBytes } from "@noble/hashes/utils";
-import {
-  createPublicClient,
-  createWalletClient,
-  encodeFunctionData,
-  erc20Abi,
-  http,
-  parseUnits,
-} from "viem";
+import { encodeFunctionData, erc20Abi, http, parseUnits } from "viem";
 import { arbitrum, arbitrumSepolia } from "viem/chains";
 import type { WalletFullContext } from "opentool/wallet";
 
@@ -597,19 +590,15 @@ export async function depositToHyperliquidBridge(options: {
   const usdcAddress = getUsdcAddress(environment);
   const amountUnits = parseUnits(amount, 6);
 
-  const walletClient =
-    wallet.walletClient ??
-    createWalletClient({
-      account: wallet.account,
-      chain,
-      transport: http(rpcUrl),
-    });
+  // Use the viem clients provided by opentool/wallet; do not construct new ones.
+  if (!wallet.walletClient || !wallet.publicClient) {
+    throw new Error(
+      "Wallet client and public client are required for deposit."
+    );
+  }
 
-  const transport = walletClient.transport ?? http(rpcUrl);
-  const publicClient = createPublicClient({
-    chain: walletClient.chain ?? chain,
-    transport,
-  });
+  const walletClient = wallet.walletClient;
+  const publicClient = wallet.publicClient;
 
   const data = encodeFunctionData({
     abi: erc20Abi,
@@ -646,8 +635,10 @@ export async function withdrawFromHyperliquid(options: {
     throw new Error("Withdraw amount must be a positive number.");
   }
 
-  if (!wallet.account || !wallet.walletClient) {
-    throw new Error("Wallet with signing capability is required for withdraw.");
+  if (!wallet.account || !wallet.walletClient || !wallet.publicClient) {
+    throw new Error(
+      "Wallet client and public client are required for withdraw."
+    );
   }
 
   const signatureChainId = getSignatureChainId(environment);
