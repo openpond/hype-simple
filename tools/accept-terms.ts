@@ -1,10 +1,7 @@
 import { z } from "zod";
 import { store } from "opentool/store";
 import { wallet } from "opentool/wallet";
-import {
-  depositToHyperliquidBridge,
-  fetchHyperliquidClearinghouseState,
-} from "../src/utils";
+import { recordHyperliquidTermsAcceptance } from "opentool/adapters/hyperliquid";
 
 function resolveChainConfig(environment: "mainnet" | "testnet") {
   return environment === "mainnet"
@@ -17,22 +14,16 @@ function resolveChainConfig(environment: "mainnet" | "testnet") {
 
 export const profile = {
   description:
-    "Bridge USDC to the Hyperliquid bridge (creates the HL user on first deposit).",
+    "Record a local acknowledgement of Hyperliquid API terms for the configured Turnkey wallet.",
 };
 
-const decimalString = z
-  .string()
-  .min(1, "amount is required")
-  .refine((v) => /^\d+(?:\.\d+)?$/.test(v), "must be a decimal string");
-
 export const schema = z.object({
-  amount: decimalString,
   environment: z.enum(["mainnet", "testnet"]).default("testnet"),
 });
 
 export async function POST(req: Request): Promise<Response> {
   const body = await req.json().catch(() => ({}));
-  const { amount, environment } = schema.parse(body);
+  const { environment } = schema.parse(body);
 
   const chainConfig = resolveChainConfig(environment);
   const context = await wallet({
@@ -50,30 +41,20 @@ export async function POST(req: Request): Promise<Response> {
 
   const walletAddress = context.address;
 
-  const deposit = await depositToHyperliquidBridge({
-    amount,
-    environment,
-    wallet: context,
-  });
-
-  const clearinghouse = await fetchHyperliquidClearinghouseState({
+  await recordHyperliquidTermsAcceptance({
     environment,
     walletAddress,
   });
 
   await store({
     source: "hyperliquid",
-    ref: deposit.txHash,
-    status: "submitted",
+    ref: `${environment}-terms-${Date.now()}`,
+    status: "accepted",
     walletAddress,
-    action: "deposit",
-    notional: amount,
+    action: "terms",
     metadata: {
       environment,
-      txHash: deposit.txHash,
-      bridge: deposit.bridgeAddress,
-      amountUnits: deposit.amountUnits,
-      clearinghouse,
+      note: "Hyperliquid does not expose a terms endpoint; this records local acknowledgement only.",
     },
   });
 
@@ -81,7 +62,7 @@ export async function POST(req: Request): Promise<Response> {
     ok: true,
     environment,
     walletAddress,
-    deposit,
-    clearinghouse,
+    termsAccepted: true,
+    note: "Hyperliquid does not expose a terms endpoint; this records local acknowledgement only.",
   });
 }

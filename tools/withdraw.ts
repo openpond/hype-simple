@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { store } from "opentool/store";
 import { wallet } from "opentool/wallet";
+import { withdrawFromHyperliquid } from "opentool/adapters/hyperliquid";
 
 function resolveChainConfig(environment: "mainnet" | "testnet") {
   return environment === "mainnet"
@@ -13,17 +14,29 @@ function resolveChainConfig(environment: "mainnet" | "testnet") {
 
 export const profile = {
   description:
-    "Record a local acknowledgement of Hyperliquid API terms for the configured Turnkey wallet.",
+    "Withdraw USDC from Hyperliquid back to an on-chain address via withdraw3.",
 };
 
+const decimalString = z
+  .string()
+  .min(1, "amount is required")
+  .refine((v) => /^\d+(?:\.\d+)?$/.test(v), "must be a decimal string");
+
 export const schema = z.object({
+  amount: decimalString,
+  destination: z
+    .string()
+    .min(1, "destination is required")
+    .refine(
+      (v) => /^0x[a-fA-F0-9]{40}$/.test(v),
+      "destination must be a hex address"
+    ),
   environment: z.enum(["mainnet", "testnet"]).default("testnet"),
-  termsVersion: z.string().optional(),
 });
 
 export async function POST(req: Request): Promise<Response> {
   const body = await req.json().catch(() => ({}));
-  const { environment, termsVersion } = schema.parse(body);
+  const { amount, destination, environment } = schema.parse(body);
 
   const chainConfig = resolveChainConfig(environment);
   const context = await wallet({
@@ -41,16 +54,25 @@ export async function POST(req: Request): Promise<Response> {
 
   const walletAddress = context.address;
 
+  const withdraw = await withdrawFromHyperliquid({
+    amount,
+    destination: destination as `0x${string}`,
+    environment,
+    wallet: context,
+  });
+
   await store({
     source: "hyperliquid",
-    ref: `${environment}-terms-${Date.now()}`,
-    status: "accepted",
+    ref: `${withdraw.nonce}`,
+    status: "submitted",
     walletAddress,
-    action: "terms",
+    action: "withdraw",
+    notional: amount,
     metadata: {
       environment,
-      termsVersion: termsVersion ?? null,
-      note: "Hyperliquid does not expose a terms endpoint; this records local acknowledgement only.",
+      destination,
+      nonce: withdraw.nonce,
+      status: withdraw.status,
     },
   });
 
@@ -58,8 +80,6 @@ export async function POST(req: Request): Promise<Response> {
     ok: true,
     environment,
     walletAddress,
-    termsAccepted: true,
-    termsVersion: termsVersion ?? null,
-    note: "Hyperliquid does not expose a terms endpoint; this records local acknowledgement only.",
+    withdraw,
   });
 }

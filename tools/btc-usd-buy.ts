@@ -1,7 +1,8 @@
 import { store } from "opentool/store";
-import { wallet, WalletFullContext } from "opentool/wallet";
-import { z } from "zod";
+import { wallet } from "opentool/wallet";
 import { placeHyperliquidOrder } from "opentool/adapters/hyperliquid";
+import type { HyperliquidEnvironment } from "opentool/adapters/hyperliquid";
+import { z } from "zod";
 
 function resolveChainConfig(environment: "mainnet" | "testnet") {
   return environment === "mainnet"
@@ -14,7 +15,7 @@ function resolveChainConfig(environment: "mainnet" | "testnet") {
 
 export const profile = {
   description:
-    "Place a Hyperliquid perp order (symbol, side, price, size, tif) using the configured signer.",
+    "Place a one-off BTC-USD limit buy (defaults: size 1000, price 85,000).",
 };
 
 const decimalString = z
@@ -23,10 +24,9 @@ const decimalString = z
   .refine((v) => /^\d+(?:\.\d+)?$/.test(v), "must be a decimal string");
 
 export const schema = z.object({
-  symbol: z.string().min(1, "symbol is required"),
-  side: z.enum(["buy", "sell"]),
-  price: decimalString,
-  size: decimalString,
+  symbol: z.string().default("BTC-USD"),
+  size: decimalString.default("1000"),
+  price: decimalString.default("85000"),
   tif: z
     .enum(["Gtc", "Ioc", "Alo", "FrontendMarket", "LiquidationMarket"])
     .default("Gtc"),
@@ -35,20 +35,29 @@ export const schema = z.object({
 
 export async function POST(req: Request): Promise<Response> {
   const body = await req.json().catch(() => ({}));
-  const { symbol, side, price, size, tif, environment } = schema.parse(body);
-
+  const { symbol, size, price, tif, environment } = schema.parse(body);
   const chainConfig = resolveChainConfig(environment);
+
   const context = await wallet({
     chain: chainConfig.chain,
+    apiKey: process.env.ALCHEMY_API_KEY,
+    rpcUrl: chainConfig.rpcUrl,
+    turnkey: {
+      organizationId: process.env.TURNKEY_SUBORG_ID!,
+      apiPublicKey: process.env.TURNKEY_API_PUBLIC_KEY!,
+      apiPrivateKey: process.env.TURNKEY_API_PRIVATE_KEY!,
+      signWith: process.env.TURNKEY_WALLET_ADDRESS!,
+      apiBaseUrl: process.env.TURNKEY_API_BASE_URL,
+    },
   });
 
   const orderResponse = await placeHyperliquidOrder({
-    wallet: context as WalletFullContext,
-    environment,
+    wallet: context,
+    environment: environment as HyperliquidEnvironment,
     orders: [
       {
         symbol,
-        side,
+        side: "buy",
         price,
         size,
         tif,
@@ -58,39 +67,37 @@ export async function POST(req: Request): Promise<Response> {
 
   const statuses = orderResponse.response?.data?.statuses ?? [];
   const firstStatus = statuses[0];
-  if (!firstStatus) {
-    throw new Error("Hyperliquid did not return an order status.");
-  }
-
   const orderId =
-    "resting" in firstStatus
+    firstStatus && "resting" in firstStatus
       ? firstStatus.resting.oid
-      : "filled" in firstStatus
+      : firstStatus && "filled" in firstStatus
       ? firstStatus.filled.oid
       : null;
 
-  if (!orderId) {
-    throw new Error("Unable to determine Hyperliquid order id.");
-  }
-
   await store({
-    source: "hyperliquid",
-    ref: orderId.toString(),
+    source: "hyperliquid-btc-usd-buy",
+    ref: orderId ? orderId.toString() : `${symbol}-${Date.now()}`,
     status: "submitted",
     walletAddress: context.address,
     action: "order",
     notional: size,
     metadata: {
-      orderId,
       symbol,
-      side,
+      side: "buy",
+      price,
       tif,
-      amount: size,
-      buyPrice: price,
+      environment,
     },
   });
 
   return Response.json({
     ok: true,
+    orderId,
+    symbol,
+    side: "buy",
+    price,
+    size,
+    tif,
+    environment,
   });
 }

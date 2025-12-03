@@ -1,11 +1,9 @@
 import { z } from "zod";
 import { store } from "opentool/store";
 import { wallet } from "opentool/wallet";
-import { fetchHyperliquidClearinghouseState } from "../src/utils";
+import { fetchHyperliquidClearinghouseState } from "opentool/adapters/hyperliquid";
 
 function resolveChainConfig(environment: "mainnet" | "testnet") {
-  // opentool/wallet supports base + base-sepolia; we use those to obtain the signer,
-  // then reuse the account for Arbitrum interactions inside utils.
   return environment === "mainnet"
     ? { chain: "base" }
     : { chain: "base-sepolia" };
@@ -47,7 +45,7 @@ export async function POST(req: Request): Promise<Response> {
   await store({
     source: "hyperliquid",
     ref: `${environment}-status-${Date.now()}`,
-    status: "checked",
+    status: "submitted",
     walletAddress,
     action: "status",
     metadata: {
