@@ -26,13 +26,18 @@ export const profile = {
 };
 
 export async function GET(_req: Request): Promise<Response> {
-  const { symbol, size, environment } = profile;
+  const { symbol, size } = profile;
+  const environment = "testnet";
   const chainConfig = resolveChainConfig(environment);
   const ctx = await wallet({ chain: chainConfig.chain });
 
   // Fetch SMA and last two closes
   const { sma, latestPrice, prevPrice } = await computeSmaFromGateway(symbol);
-  if (!Number.isFinite(sma) || !Number.isFinite(latestPrice) || !Number.isFinite(prevPrice)) {
+  if (
+    !Number.isFinite(sma) ||
+    !Number.isFinite(latestPrice) ||
+    !Number.isFinite(prevPrice)
+  ) {
     throw new Error("Unable to compute SMA or latest prices");
   }
 
@@ -41,10 +46,19 @@ export async function GET(_req: Request): Promise<Response> {
     environment,
     walletAddress: ctx.address as `0x${string}`,
   });
+  const assetPositions = (clearing as any)?.data?.assetPositions;
+  if (!Array.isArray(assetPositions)) {
+    throw new Error(
+      "Hyperliquid clearinghouseState did not return assetPositions"
+    );
+  }
   const currentSizeRaw =
-    clearing?.assetPositions?.find((p) =>
-      typeof p.coin === "string" ? p.coin.toUpperCase().startsWith(symbol.split("-")[0].toUpperCase()) : false
-    )?.szi ?? 0;
+    assetPositions.find((p: any) => {
+      const coin = typeof p.coin === "string" ? p.coin : p?.position?.coin;
+      return typeof coin === "string"
+        ? coin.toUpperCase().startsWith(symbol.split("-")[0].toUpperCase())
+        : false;
+    })?.szi ?? 0;
   const currentSize = Number.parseFloat(String(currentSizeRaw)) || 0;
   const hasLong = currentSize > 0;
 
@@ -100,13 +114,13 @@ export async function GET(_req: Request): Promise<Response> {
 
   // Record outcome
   await store({
-    source: "hyperliquid-sma",
+    source: "hyperliquid",
     ref: `sma-${symbol}-${Date.now()}`,
     status: actions.length ? "submitted" : "info",
     walletAddress: ctx.address,
     action: actions.length ? "order" : "noop",
-    notional: actions.length ? size : null,
-    network: environment === "mainnet" ? "hyperliquid" : "hyperliquid-testnet",
+    notional: actions.length ? size : undefined,
+    network: "hyperliquid-testnet",
     metadata: {
       symbol,
       size,
@@ -148,7 +162,7 @@ async function computeSmaFromGateway(
     to: Math.floor(Date.now() / 1000).toString(),
   });
 
-  const url = `${gatewayBase}/v1/hyperliquid/bars?${params.toString()}`;
+  const url = `https://api.staging-api.openpond.ai/v1/hyperliquid/bars?${params.toString()}`;
   const res = await fetch(url);
   if (!res.ok) {
     throw new Error(

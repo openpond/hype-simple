@@ -1,22 +1,40 @@
 import { z } from "zod";
-import { wallet } from "opentool/wallet";
-import {
-  placeHyperliquidOrder,
-  HyperliquidApiError,
-  fetchHyperliquidClearinghouseState,
-} from "opentool/adapters/hyperliquid";
+import { HyperliquidApiError, placeHyperliquidOrder } from "opentool/adapters/hyperliquid";
 import { store } from "opentool/store";
+import { wallet } from "opentool/wallet";
 import type { WalletFullContext } from "opentool/wallet";
+
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function resolveChainConfig(environment: "mainnet" | "testnet") {
+  return environment === "mainnet"
+    ? { chain: "arbitrum", rpcUrl: process.env.ARBITRUM_RPC_URL }
+    : { chain: "arbitrum-sepolia", rpcUrl: process.env.ARBITRUM_SEPOLIA_RPC_URL };
+}
 
 export const schema = z.object({
   symbol: z.string().min(1),
   environment: z.enum(["mainnet", "testnet"]).default("testnet"),
-  size: z.union([z.string(), z.number()]).optional(),
+  size: z.union([z.string(), z.number()]).refine(
+    (v) => {
+      const n = toFiniteNumber(v);
+      return n !== null && n !== 0;
+    },
+    { message: "size must be a non-zero number" }
+  ),
 });
 
 export const profile = {
-  description:
-    "Close a Hyperliquid position (market reduce-only). If size is omitted, closes the full position.",
+  description: "Close a Hyperliquid position (market reduce-only) for the given size.",
 };
 
 export async function POST(req: Request): Promise<Response> {
@@ -24,64 +42,29 @@ export async function POST(req: Request): Promise<Response> {
     const body = await req.json().catch(() => ({}));
     const parsed = schema.safeParse(body);
     if (!parsed.success) {
-      return new Response(
-        JSON.stringify({ ok: false, error: parsed.error.flatten() }),
-        {
-          status: 400,
-          headers: { "content-type": "application/json" },
-        }
-      );
+      return new Response(JSON.stringify({ ok: false, error: parsed.error.flatten() }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
     }
 
     const { symbol, environment } = parsed.data;
     const requestedSize = parsed.data.size;
 
-    const ctx = await wallet({
-      chain: environment === "mainnet" ? "arbitrum" : "arbitrum-sepolia",
-    });
+    const chainConfig = resolveChainConfig(environment);
+    const ctx = await wallet({ chain: chainConfig.chain, rpcUrl: chainConfig.rpcUrl });
 
     const walletAddress = ctx.address;
-    const currentSize =
-      requestedSize !== undefined
-        ? Number.parseFloat(String(requestedSize))
-        : await (async () => {
-            try {
-              const state = await fetchHyperliquidClearinghouseState({
-                environment,
-                walletAddress: walletAddress as `0x${string}`,
-              });
-              const target = symbol.toUpperCase();
-              const pos = (state.data as any)?.assetPositions?.find(
-                (p: any) => p.coin?.toUpperCase() === target
-              );
-              const raw = pos?.szi ?? pos?.position?.szi;
-              const numeric =
-                typeof raw === "number"
-                  ? raw
-                  : typeof raw === "string" && raw.trim().length > 0
-                    ? Number.parseFloat(raw)
-                    : null;
-              return Number.isFinite(numeric) ? numeric : null;
-            } catch {
-              return null;
-            }
-          })();
-
-    if (!currentSize || !Number.isFinite(currentSize) || currentSize === 0) {
-      return new Response(
-        JSON.stringify({
-          ok: false,
-          error: "No open position to close or size not provided.",
-        }),
-        {
-          status: 400,
-          headers: { "content-type": "application/json" },
-        }
-      );
+    const numericSize = toFiniteNumber(requestedSize);
+    if (numericSize === null || numericSize === 0) {
+      return new Response(JSON.stringify({ ok: false, error: "size must be a non-zero number" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
     }
 
-    const side = currentSize > 0 ? "sell" : "buy";
-    const sizeAbs = Math.abs(currentSize).toString();
+    const side = numericSize > 0 ? "sell" : "buy";
+    const sizeAbs = Math.abs(numericSize).toString();
 
     const entry = await placeHyperliquidOrder({
       wallet: ctx as WalletFullContext,
@@ -107,8 +90,7 @@ export async function POST(req: Request): Promise<Response> {
       walletAddress,
       action: "close",
       notional: sizeAbs,
-      network:
-        environment === "mainnet" ? "hyperliquid" : "hyperliquid-testnet",
+      network: environment === "mainnet" ? "hyperliquid" : "hyperliquid-testnet",
       metadata: {
         symbol,
         side,
@@ -119,12 +101,7 @@ export async function POST(req: Request): Promise<Response> {
       },
     });
 
-    return Response.json({
-      ok: true,
-      environment,
-      ref,
-      entry,
-    });
+    return Response.json({ ok: true, environment, ref, entry });
   } catch (error) {
     if (error instanceof HyperliquidApiError) {
       return Response.json(
@@ -133,10 +110,7 @@ export async function POST(req: Request): Promise<Response> {
       );
     }
     return Response.json(
-      {
-        ok: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-      },
+      { ok: false, error: error instanceof Error ? error.message : "Unknown error" },
       { status: 500 }
     );
   }
