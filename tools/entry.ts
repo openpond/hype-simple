@@ -3,6 +3,7 @@ import { wallet } from "opentool/wallet";
 import {
   placeHyperliquidOrder,
   updateHyperliquidLeverage,
+  HyperliquidApiError,
 } from "opentool/adapters/hyperliquid";
 import { store } from "opentool/store";
 import type { WalletFullContext } from "opentool/wallet";
@@ -35,6 +36,7 @@ export const profile = {
 };
 
 export async function POST(req: Request): Promise<Response> {
+  try {
   const body = await req.json().catch(() => ({}));
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
@@ -236,4 +238,23 @@ export async function POST(req: Request): Promise<Response> {
     entry,
     tpSl: tpSlResult,
   });
+  } catch (error) {
+    if (error instanceof HyperliquidApiError) {
+      return Response.json(
+        {
+          ok: false,
+          error: error.message,
+          exchangeResponse: error.response,
+        },
+        { status: 500 }
+      );
+    }
+    return Response.json(
+      {
+        ok: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
+      { status: 500 }
+    );
+  }
 }
