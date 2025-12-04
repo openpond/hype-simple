@@ -44,7 +44,7 @@ export async function POST(req: Request): Promise<Response> {
 
   await store({
     source: "hyperliquid",
-    ref: `${environment}-status-${Date.now()}`,
+    ref: `status-${Date.now()}`,
     status: "submitted",
     walletAddress,
     action: "status",
