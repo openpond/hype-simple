@@ -32,12 +32,8 @@ export async function GET(_req: Request): Promise<Response> {
   const ctx = await wallet({ chain: chainConfig.chain });
 
   // Fetch SMA and last two closes
-  const { sma, latestPrice, prevPrice } = await computeSmaFromGateway(symbol);
-  if (
-    !Number.isFinite(sma) ||
-    !Number.isFinite(latestPrice) ||
-    !Number.isFinite(prevPrice)
-  ) {
+  const { sma, latestPrice, prevPrice, recentCloses } = await computeSmaFromGateway(symbol);
+  if (!Number.isFinite(sma) || !Number.isFinite(latestPrice) || !Number.isFinite(prevPrice)) {
     throw new Error("Unable to compute SMA or latest prices");
   }
 
@@ -73,9 +69,16 @@ export async function GET(_req: Request): Promise<Response> {
   const currentSize = Number.parseFloat(String(currentSizeRaw)) || 0;
   const hasLong = currentSize > 0;
 
-  // Detect cross (long-only): cross up → go long, cross down → flat
+  // Detect cross (long-only) with 10m confirmation:
+  // - Cross up: last two 1m closes above SMA after previously below (prev <= sma, latest > sma).
+  // - Cross down: last two 1m closes below SMA after previously above (prev >= sma, latest < sma),
+  //   and last two closed candles both below SMA (use recentCloses[-2], recentCloses[-3]).
   const crossedUp = prevPrice <= sma && latestPrice > sma;
-  const crossedDown = prevPrice >= sma && latestPrice < sma;
+  const last = recentCloses[recentCloses.length - 1] ?? latestPrice;
+  const last2 = recentCloses[recentCloses.length - 2] ?? prevPrice;
+  const last3 = recentCloses[recentCloses.length - 3] ?? prevPrice;
+  const bothRecentlyBelow = last < sma && last2 < sma;
+  const crossedDown = prevPrice >= sma && latestPrice < sma && bothRecentlyBelow;
 
   const actions: Array<() => Promise<void>> = [];
 
@@ -161,7 +164,7 @@ export async function GET(_req: Request): Promise<Response> {
 
 async function computeSmaFromGateway(
   symbol: string
-): Promise<{ sma: number; latestPrice: number; prevPrice: number }> {
+): Promise<{ sma: number; latestPrice: number; prevPrice: number; recentCloses: number[] }> {
   const coin = symbol.split("-")[0] || symbol;
 
   const params = new URLSearchParams({
@@ -195,5 +198,5 @@ async function computeSmaFromGateway(
   const latestPrice = window[window.length - 1];
   const prevPrice = window[window.length - 2];
   const sma = window.reduce((acc, v) => acc + v, 0) / window.length;
-  return { sma, latestPrice, prevPrice };
+  return { sma, latestPrice, prevPrice, recentCloses: closes.slice(-10) };
 }
