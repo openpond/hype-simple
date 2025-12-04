@@ -6,7 +6,11 @@ import {
 } from "opentool/adapters/hyperliquid";
 import { store } from "opentool/store";
 import type { WalletFullContext } from "opentool/wallet";
-import type { HyperliquidTriggerOptions } from "opentool/adapters/hyperliquid";
+import type {
+  HyperliquidOrderResponse,
+  HyperliquidOrderStatus,
+  HyperliquidTriggerOptions,
+} from "opentool/adapters/hyperliquid";
 
 export const schema = z.object({
   symbol: z.string().min(1),
@@ -74,23 +78,50 @@ export async function POST(req: Request): Promise<Response> {
 
   const tif = type === "market" ? "FrontendMarket" : "Ioc";
 
+  const extractOrderRef = (
+    result: HyperliquidOrderResponse | unknown
+  ): string | null => {
+    const statuses = (result as any)?.response?.data?.statuses as
+      | HyperliquidOrderStatus[]
+      | undefined;
+    if (!Array.isArray(statuses)) return null;
+    for (const status of statuses) {
+      const resting = (status as any).resting;
+      if (resting?.cloid != null) return String(resting.cloid);
+      if (resting?.oid != null) return String(resting.oid);
+      const filled = (status as any).filled;
+      if (filled?.cloid != null) return String(filled.cloid);
+      if (filled?.oid != null) return String(filled.oid);
+    }
+    return null;
+  };
+
   // Resolve price for market orders using gateway mark price.
   let entryPrice = price;
   if (type === "market") {
     const gatewayBase = process.env.OPENPOND_GATEWAY_URL?.replace(/\/$/, "");
     if (!gatewayBase) {
-      throw new Error("OPENPOND_GATEWAY_URL is not configured for price lookup.");
+      throw new Error(
+        "OPENPOND_GATEWAY_URL is not configured for price lookup."
+      );
     }
     const coin = symbol.split("-")[0] || symbol;
-    const url = `${gatewayBase}/v1/hyperliquid/market-stats?symbol=${encodeURIComponent(coin)}`;
+    const url = `${gatewayBase}/v1/hyperliquid/market-stats?symbol=${encodeURIComponent(
+      coin
+    )}`;
     const res = await fetch(url);
     if (!res.ok) {
-      throw new Error(`Failed to fetch market price (${res.status}) from gateway`);
+      throw new Error(
+        `Failed to fetch market price (${res.status}) from gateway`
+      );
     }
-    const stats = (await res.json().catch(() => null)) as { markPrice?: number | null } | null;
-    const mark = typeof stats?.markPrice === "number" && Number.isFinite(stats.markPrice)
-      ? stats.markPrice
-      : null;
+    const stats = (await res.json().catch(() => null)) as {
+      markPrice?: number | null;
+    } | null;
+    const mark =
+      typeof stats?.markPrice === "number" && Number.isFinite(stats.markPrice)
+        ? stats.markPrice
+        : null;
     if (mark == null || mark <= 0) {
       throw new Error("Gateway did not return a valid mark price.");
     }
@@ -98,10 +129,16 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   if (!entryPrice && type === "limit") {
-    return new Response(JSON.stringify({ ok: false, error: "price is required for limit orders" }), {
-      status: 400,
-      headers: { "content-type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error: "price is required for limit orders",
+      }),
+      {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      }
+    );
   }
 
   const entry = await placeHyperliquidOrder({
@@ -165,14 +202,17 @@ export async function POST(req: Request): Promise<Response> {
     });
   }
 
+  const orderRef = extractOrderRef(entry) ?? `${symbol}-${Date.now()}`;
+
   // Persist entry + optional TP/SL setup
   await store({
-    source: "hyperliquid-entry",
-    ref: `${symbol}-${Date.now()}`,
+    source: "hyperliquid",
+    ref: orderRef,
     status: "submitted",
     walletAddress: ctx.address,
     action: "order",
     notional: size,
+    network: "hyperliquid",
     metadata: {
       symbol,
       side,
