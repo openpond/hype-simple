@@ -151,8 +151,6 @@ export async function GET(_req: Request): Promise<Response> {
 async function computeSmaFromGateway(
   symbol: string
 ): Promise<{ sma: number; latestPrice: number; prevPrice: number }> {
-  const gatewayBase = process.env.OPENPOND_GATEWAY_URL?.replace(/\/$/, "");
-
   const coin = symbol.split("-")[0] || symbol;
 
   const params = new URLSearchParams({
@@ -162,7 +160,7 @@ async function computeSmaFromGateway(
     to: Math.floor(Date.now() / 1000).toString(),
   });
 
-  const url = `https://api.staging-api.openpond.ai/v1/hyperliquid/bars?${params.toString()}`;
+  const url = `https://gateway-staging.openpond.dev/v1/hyperliquid/bars?${params.toString()}`;
   const res = await fetch(url);
   if (!res.ok) {
     throw new Error(
