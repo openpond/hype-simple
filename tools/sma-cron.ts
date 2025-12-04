@@ -61,7 +61,14 @@ export async function GET(_req: Request): Promise<Response> {
       return typeof coin === "string"
         ? coin.toUpperCase().startsWith(symbol.split("-")[0].toUpperCase())
         : false;
-    })?.szi ?? 0;
+    })?.szi ??
+    assetPositions.find((p: any) => {
+      const coin = typeof p.coin === "string" ? p.coin : p?.position?.coin;
+      return typeof coin === "string"
+        ? coin.toUpperCase().startsWith(symbol.split("-")[0].toUpperCase())
+        : false;
+    })?.position?.szi ??
+    0;
   const currentSize = Number.parseFloat(String(currentSizeRaw)) || 0;
   const hasLong = currentSize > 0;
 
