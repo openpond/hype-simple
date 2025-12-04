@@ -1,5 +1,10 @@
-import { retrieve } from "opentool/store";
+import { store } from "opentool/store";
 import { wallet } from "opentool/wallet";
+import {
+  placeHyperliquidOrder,
+  fetchHyperliquidClearinghouseState,
+} from "opentool/adapters/hyperliquid";
+import type { WalletFullContext } from "opentool/wallet";
 
 function resolveChainConfig(environment: "mainnet" | "testnet") {
   return environment === "mainnet"
@@ -12,7 +17,7 @@ function resolveChainConfig(environment: "mainnet" | "testnet") {
 
 export const profile = {
   description:
-    "Example strategy stub: every 10 minutes compute a 200 SMA on 1m candles and place a buy/sell. Replace the SMA fetch stub with real market data.",
+    "Long-only SMA strategy: every 10 minutes check SMA200 on 1m candles and flip between flat/long on crosses.",
   schedule: { cron: "*/10 * * * *", enabled: true },
   limits: { concurrency: 1 },
   symbol: "BTC-USDC",
@@ -20,55 +25,118 @@ export const profile = {
   environment: "testnet",
 };
 
-export async function GET(req: Request): Promise<Response> {
-  const { symbol, size } = profile;
-  const chainConfig = resolveChainConfig("testnet");
-  const context = await wallet({
-    chain: chainConfig.chain,
-  });
+export async function GET(_req: Request): Promise<Response> {
+  const { symbol, size, environment } = profile;
+  const chainConfig = resolveChainConfig(environment);
+  const ctx = await wallet({ chain: chainConfig.chain });
 
-  // Read last recorded action to keep a single-position regime.
-  const history = await retrieve({
-    source: "hyperliquid-sma",
-    walletAddress: context.address,
-    symbol,
-    limit: 50,
-  });
-  const lastEntry = history.items?.[0];
-  const lastState =
-    (
-      lastEntry?.metadata as
-        | { positionState?: "long" | "short" | "flat" | undefined }
-        | undefined
-    )?.positionState ?? "flat";
-
-  const { sma, latestPrice } = await computeSmaFromGateway(symbol);
-  console.log("sma", sma);
-  console.log("latestPrice", latestPrice);
-  if (!sma || !latestPrice) {
-    throw new Error("Unable to compute SMA or latest price (stub).");
+  // Fetch SMA and last two closes
+  const { sma, latestPrice, prevPrice } = await computeSmaFromGateway(symbol);
+  if (!Number.isFinite(sma) || !Number.isFinite(latestPrice) || !Number.isFinite(prevPrice)) {
+    throw new Error("Unable to compute SMA or latest prices");
   }
 
-  const side = latestPrice > sma ? "buy" : "sell";
-  const desiredState = side === "buy" ? "long" : "short";
-  console.log("side calculated", side);
+  // Fetch current position from clearinghouse (source of truth)
+  const clearing = await fetchHyperliquidClearinghouseState({
+    environment,
+    walletAddress: ctx.address as `0x${string}`,
+  });
+  const currentSizeRaw =
+    clearing?.assetPositions?.find((p) =>
+      typeof p.coin === "string" ? p.coin.toUpperCase().startsWith(symbol.split("-")[0].toUpperCase()) : false
+    )?.szi ?? 0;
+  const currentSize = Number.parseFloat(String(currentSizeRaw)) || 0;
+  const hasLong = currentSize > 0;
+
+  // Detect cross (long-only): cross up → go long, cross down → flat
+  const crossedUp = prevPrice <= sma && latestPrice > sma;
+  const crossedDown = prevPrice >= sma && latestPrice < sma;
+
+  const actions: Array<() => Promise<void>> = [];
+
+  if (crossedDown && hasLong) {
+    // Close existing long
+    actions.push(async () => {
+      await placeHyperliquidOrder({
+        wallet: ctx as WalletFullContext,
+        environment,
+        orders: [
+          {
+            symbol,
+            side: "sell",
+            price: "0",
+            size: Math.abs(currentSize).toString(),
+            tif: "FrontendMarket",
+            reduceOnly: true,
+          },
+        ],
+      });
+    });
+  }
+
+  if (crossedUp && !hasLong) {
+    // Open new long
+    actions.push(async () => {
+      await placeHyperliquidOrder({
+        wallet: ctx as WalletFullContext,
+        environment,
+        orders: [
+          {
+            symbol,
+            side: "buy",
+            price: "0",
+            size,
+            tif: "FrontendMarket",
+            reduceOnly: false,
+          },
+        ],
+      });
+    });
+  }
+
+  for (const act of actions) {
+    await act();
+  }
+
+  // Record outcome
+  await store({
+    source: "hyperliquid-sma",
+    ref: `sma-${symbol}-${Date.now()}`,
+    status: actions.length ? "submitted" : "info",
+    walletAddress: ctx.address,
+    action: actions.length ? "order" : "noop",
+    notional: actions.length ? size : null,
+    network: environment === "mainnet" ? "hyperliquid" : "hyperliquid-testnet",
+    metadata: {
+      symbol,
+      size,
+      environment,
+      sma200: sma,
+      latestPrice,
+      prevPrice,
+      crossedUp,
+      crossedDown,
+      hadLong: hasLong,
+      actionsTaken: actions.length,
+    },
+  });
 
   return Response.json({
     ok: true,
-    side,
+    actions: actions.length,
+    crossedUp,
+    crossedDown,
     sma200_1m: sma,
     latestPrice,
-    position: {
-      lastState,
-      desiredState,
-    },
-    note: "Dry run: order/store disabled; logging only.",
+    prevPrice,
+    positionSize: currentSize,
+    note: actions.length ? "orders placed" : "no action taken",
   });
 }
 
 async function computeSmaFromGateway(
   symbol: string
-): Promise<{ sma: number; latestPrice: number }> {
+): Promise<{ sma: number; latestPrice: number; prevPrice: number }> {
   const gatewayBase = process.env.OPENPOND_GATEWAY_URL?.replace(/\/$/, "");
 
   const coin = symbol.split("-")[0] || symbol;
@@ -102,6 +170,7 @@ async function computeSmaFromGateway(
 
   const window = closes.slice(-200);
   const latestPrice = window[window.length - 1];
+  const prevPrice = window[window.length - 2];
   const sma = window.reduce((acc, v) => acc + v, 0) / window.length;
-  return { sma, latestPrice };
+  return { sma, latestPrice, prevPrice };
 }
