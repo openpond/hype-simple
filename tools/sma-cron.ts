@@ -47,7 +47,8 @@ export async function GET(_req: Request): Promise<Response> {
     walletAddress: ctx.address as `0x${string}`,
   });
   const assetPositions =
-    (clearing as any)?.data?.assetPositions ?? (clearing as any)?.assetPositions;
+    (clearing as any)?.data?.assetPositions ??
+    (clearing as any)?.assetPositions;
   if (!Array.isArray(assetPositions)) {
     throw new Error(
       `Hyperliquid clearinghouseState did not return assetPositions (got keys: ${Object.keys(
@@ -170,11 +171,7 @@ async function computeSmaFromGateway(
     to: Math.floor(Date.now() / 1000).toString(),
   });
 
-  const gatewayBase = process.env.OPENPOND_GATEWAY_URL?.replace(/\/$/, "");
-  if (!gatewayBase) {
-    throw new Error("OPENPOND_GATEWAY_URL is not set");
-  }
-  const url = `${gatewayBase}/v1/hyperliquid/bars?${params.toString()}`;
+  const url = `https://gateway-staging.openpond.dev/v1/hyperliquid/bars?${params.toString()}`;
   const res = await fetch(url);
   if (!res.ok) {
     throw new Error(
