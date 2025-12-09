@@ -28,8 +28,10 @@ function formatMarketablePrice(
     (side === "buy"
       ? 1 + slippageBps / 10_000
       : 1 - slippageBps / 10_000);
-  // Round to the observed precision of the feed to respect tick-size-like constraints.
-  const rounded = Math.round(adjusted * factor) / factor;
+  // Round in the direction that preserves marketability (ceil for buys, floor for sells)
+  const scaled = adjusted * factor;
+  const rounded =
+    side === "buy" ? Math.ceil(scaled) / factor : Math.floor(scaled) / factor;
   return rounded.toString();
 }
 
