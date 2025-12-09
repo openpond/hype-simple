@@ -71,14 +71,17 @@ export async function GET(_req: Request): Promise<Response> {
 
   // Detect cross (long-only) with 10m confirmation:
   // - Cross up: last two 1m closes above SMA after previously below (prev <= sma, latest > sma).
-  // - Cross down: last two 1m closes below SMA after previously above (prev >= sma, latest < sma),
-  //   and last two closed candles both below SMA (use recentCloses[-2], recentCloses[-3]).
+  // - Cross down: two-bar confirmation below SMA after previously above (prev >= sma, latest < sma),
+  //   and the bar before prev also below SMA. Use the three most recent closed candles.
   const crossedUp = prevPrice <= sma && latestPrice > sma;
-  const last = recentCloses[recentCloses.length - 1] ?? latestPrice;
-  const last2 = recentCloses[recentCloses.length - 2] ?? prevPrice;
-  const last3 = recentCloses[recentCloses.length - 3] ?? prevPrice;
-  const bothRecentlyBelow = last < sma && last2 < sma;
-  const crossedDown = prevPrice >= sma && latestPrice < sma && bothRecentlyBelow;
+  const last = recentCloses[recentCloses.length - 1] ?? latestPrice; // most recent close (same as latestPrice)
+  const last2 = recentCloses[recentCloses.length - 2] ?? prevPrice; // one bar back (same as prevPrice)
+  const last3 = recentCloses[recentCloses.length - 3]; // two bars back
+  const crossedDown =
+    prevPrice >= sma &&
+    latestPrice < sma &&
+    last2 < sma && // prev bar also below
+    (last3 ?? prevPrice) < sma; // two bars back below to confirm drift under SMA
 
   const actions: Array<() => Promise<void>> = [];
 
