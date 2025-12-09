@@ -32,8 +32,19 @@ export async function GET(_req: Request): Promise<Response> {
   const ctx = await wallet({ chain: chainConfig.chain });
 
   // Fetch SMA and last two closes
-  const { sma, latestPrice, prevPrice, recentCloses } = await computeSmaFromGateway(symbol);
-  if (!Number.isFinite(sma) || !Number.isFinite(latestPrice) || !Number.isFinite(prevPrice)) {
+  const {
+    smaCurr,
+    smaPrev,
+    latestPrice,
+    prevPrice,
+    recentCloses,
+  } = await computeSmaFromGateway(symbol);
+  if (
+    !Number.isFinite(smaCurr) ||
+    !Number.isFinite(smaPrev) ||
+    !Number.isFinite(latestPrice) ||
+    !Number.isFinite(prevPrice)
+  ) {
     throw new Error("Unable to compute SMA or latest prices");
   }
 
@@ -69,12 +80,13 @@ export async function GET(_req: Request): Promise<Response> {
   const currentSize = Number.parseFloat(String(currentSizeRaw)) || 0;
   const hasLong = currentSize > 0;
 
-  // Detect cross (long-only) with 10m confirmation:
-  // - Cross up: last two 1m closes above SMA after previously below (prev <= sma, latest > sma).
-  // - Cross down: exit when the last two closes are below SMA (avoid contradictory checks).
-  const crossedUp = prevPrice <= sma && latestPrice > sma;
-  const last2 = recentCloses[recentCloses.length - 2] ?? prevPrice; // one bar back (same as prevPrice)
-  const crossedDown = latestPrice < sma && last2 < sma; // two consecutive closes under SMA
+  // Detect cross using each candle's own SMA (traditional definition):
+  // - smaPrev: SMA200 ending at the previous close
+  // - smaCurr: SMA200 ending at the latest close
+  // Cross up when prev close is at/below its SMA and latest close is above its SMA.
+  // Cross down when prev close is at/above its SMA and latest close is below its SMA.
+  const crossedUp = prevPrice <= smaPrev && latestPrice > smaCurr;
+  const crossedDown = prevPrice >= smaPrev && latestPrice < smaCurr;
 
   const actions: Array<() => Promise<void>> = [];
 
@@ -135,7 +147,8 @@ export async function GET(_req: Request): Promise<Response> {
       symbol,
       size,
       environment,
-      sma200: sma,
+      sma200Curr: smaCurr,
+      sma200Prev: smaPrev,
       latestPrice,
       prevPrice,
       crossedUp,
@@ -160,7 +173,13 @@ export async function GET(_req: Request): Promise<Response> {
 
 async function computeSmaFromGateway(
   symbol: string
-): Promise<{ sma: number; latestPrice: number; prevPrice: number; recentCloses: number[] }> {
+): Promise<{
+  smaCurr: number;
+  smaPrev: number;
+  latestPrice: number;
+  prevPrice: number;
+  recentCloses: number[];
+}> {
   const coin = symbol.split("-")[0] || symbol;
 
   const params = new URLSearchParams({
@@ -186,13 +205,15 @@ async function computeSmaFromGateway(
     .map((b) => b.close ?? b.c ?? 0)
     .filter((v) => Number.isFinite(v));
 
-  if (closes.length < 200) {
-    throw new Error("Not enough bars to compute SMA200");
+  if (closes.length < 201) {
+    throw new Error("Not enough bars to compute SMA200 (need 201 closes to get prev + curr)");
   }
 
-  const window = closes.slice(-200);
-  const latestPrice = window[window.length - 1];
-  const prevPrice = window[window.length - 2];
-  const sma = window.reduce((acc, v) => acc + v, 0) / window.length;
-  return { sma, latestPrice, prevPrice, recentCloses: closes.slice(-10) };
+  const currWindow = closes.slice(-200); // ends at latest close
+  const prevWindow = closes.slice(-201, -1); // ends at prev close
+  const latestPrice = currWindow[currWindow.length - 1];
+  const prevPrice = prevWindow[prevWindow.length - 1];
+  const smaCurr = currWindow.reduce((acc, v) => acc + v, 0) / currWindow.length;
+  const smaPrev = prevWindow.reduce((acc, v) => acc + v, 0) / prevWindow.length;
+  return { smaCurr, smaPrev, latestPrice, prevPrice, recentCloses: closes.slice(-10) };
 }
