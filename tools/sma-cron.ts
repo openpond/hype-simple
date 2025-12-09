@@ -7,6 +7,7 @@ import {
 import type { WalletFullContext } from "opentool/wallet";
 
 const BARS_TO_CHECK = 10; // number of 1m candles to scan each run (10 minutes)
+const MARKET_SLIPPAGE_BPS = 50; // 0.50% buffer to satisfy non-zero price requirement on market orders
 
 function resolveChainConfig(environment: "mainnet" | "testnet") {
   return environment === "mainnet"
@@ -82,6 +83,8 @@ export async function GET(_req: Request): Promise<Response> {
   const actions: Array<() => Promise<void>> = [];
 
   if (crossedDown && hasLong) {
+    const price =
+      signal.latestPrice * (1 - MARKET_SLIPPAGE_BPS / 10_000); // cross down -> sell slightly below to ensure fill
     // Close existing long
     actions.push(async () => {
       await placeHyperliquidOrder({
@@ -91,7 +94,7 @@ export async function GET(_req: Request): Promise<Response> {
           {
             symbol,
             side: "sell",
-            price: "0",
+            price: price.toString(),
             size: Math.abs(currentSize).toString(),
             tif: "FrontendMarket",
             reduceOnly: true,
@@ -102,6 +105,8 @@ export async function GET(_req: Request): Promise<Response> {
   }
 
   if (crossedUp && !hasLong) {
+    const price =
+      signal.latestPrice * (1 + MARKET_SLIPPAGE_BPS / 10_000); // cross up -> buy slightly above to ensure fill
     // Open new long
     actions.push(async () => {
       await placeHyperliquidOrder({
@@ -111,7 +116,7 @@ export async function GET(_req: Request): Promise<Response> {
           {
             symbol,
             side: "buy",
-            price: "0",
+            price: price.toString(),
             size,
             tif: "FrontendMarket",
             reduceOnly: false,
@@ -148,6 +153,7 @@ export async function GET(_req: Request): Promise<Response> {
       actionsTaken: actions.length,
       signalOffsetMinutes: signal.offset,
       samplesChecked: samples.length,
+      limitPriceUsed: actions.length ? signal.latestPrice : undefined,
     },
   });
 
