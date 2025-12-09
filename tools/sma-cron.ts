@@ -84,9 +84,9 @@ export async function GET(_req: Request): Promise<Response> {
   // - smaPrev: SMA200 ending at the previous close
   // - smaCurr: SMA200 ending at the latest close
   // Cross up when prev close is at/below its SMA and latest close is above its SMA.
-  // Cross down when prev close is at/above its SMA and latest close is below its SMA.
+  // Exit rule (two-bar guard): if already long, exit when the last two closes are below their SMAs.
   const crossedUp = prevPrice <= smaPrev && latestPrice > smaCurr;
-  const crossedDown = prevPrice >= smaPrev && latestPrice < smaCurr;
+  const crossedDown = hasLong && prevPrice < smaPrev && latestPrice < smaCurr;
 
   const actions: Array<() => Promise<void>> = [];
 
