@@ -6,6 +6,8 @@ import {
 } from "opentool/adapters/hyperliquid";
 import type { WalletFullContext } from "opentool/wallet";
 
+const BARS_TO_CHECK = 10; // number of 1m candles to scan each run (10 minutes)
+
 function resolveChainConfig(environment: "mainnet" | "testnet") {
   return environment === "mainnet"
     ? { chain: "arbitrum", rpcUrl: process.env.ARBITRUM_RPC_URL }
@@ -31,22 +33,11 @@ export async function GET(_req: Request): Promise<Response> {
   const chainConfig = resolveChainConfig(environment);
   const ctx = await wallet({ chain: chainConfig.chain });
 
-  // Fetch SMA and last two closes
-  const {
-    smaCurr,
-    smaPrev,
-    latestPrice,
-    prevPrice,
-    recentCloses,
-  } = await computeSmaFromGateway(symbol);
-  if (
-    !Number.isFinite(smaCurr) ||
-    !Number.isFinite(smaPrev) ||
-    !Number.isFinite(latestPrice) ||
-    !Number.isFinite(prevPrice)
-  ) {
-    throw new Error("Unable to compute SMA or latest prices");
-  }
+  // Fetch SMA snapshots for the latest 10 one-minute candles (to avoid missing a cross between runs)
+  const { samples, recentCloses } = await computeSmaFromGateway(symbol);
+  const signal =
+    samples.find((s) => s.crossedUp || s.crossedDown) ?? samples[0];
+  const { smaCurr, smaPrev, latestPrice, prevPrice } = signal;
 
   // Fetch current position from clearinghouse (source of truth)
   const clearing = await fetchHyperliquidClearinghouseState({
@@ -85,8 +76,8 @@ export async function GET(_req: Request): Promise<Response> {
   // - smaCurr: SMA200 ending at the latest close
   // Cross up when prev close is at/below its SMA and latest close is above its SMA.
   // Exit rule (two-bar guard): if already long, exit when the last two closes are below their SMAs.
-  const crossedUp = prevPrice <= smaPrev && latestPrice > smaCurr;
-  const crossedDown = hasLong && prevPrice < smaPrev && latestPrice < smaCurr;
+  const crossedUp = signal.crossedUp;
+  const crossedDown = hasLong && signal.crossedDown;
 
   const actions: Array<() => Promise<void>> = [];
 
@@ -155,6 +146,8 @@ export async function GET(_req: Request): Promise<Response> {
       crossedDown,
       hadLong: hasLong,
       actionsTaken: actions.length,
+      signalOffsetMinutes: signal.offset,
+      samplesChecked: samples.length,
     },
   });
 
@@ -163,11 +156,13 @@ export async function GET(_req: Request): Promise<Response> {
     actions: actions.length,
     crossedUp,
     crossedDown,
-    sma200_1m: sma,
+    sma200_1m: smaCurr,
     latestPrice,
     prevPrice,
     positionSize: currentSize,
     note: actions.length ? "orders placed" : "no action taken",
+    signalOffsetMinutes: signal.offset,
+    samplesChecked: samples.length,
   });
 }
 
@@ -179,6 +174,15 @@ async function computeSmaFromGateway(
   latestPrice: number;
   prevPrice: number;
   recentCloses: number[];
+  samples: Array<{
+    offset: number;
+    smaCurr: number;
+    smaPrev: number;
+    latestPrice: number;
+    prevPrice: number;
+    crossedUp: boolean;
+    crossedDown: boolean;
+  }>;
 }> {
   const coin = symbol.split("-")[0] || symbol;
 
@@ -205,15 +209,65 @@ async function computeSmaFromGateway(
     .map((b) => b.close ?? b.c ?? 0)
     .filter((v) => Number.isFinite(v));
 
-  if (closes.length < 201) {
-    throw new Error("Not enough bars to compute SMA200 (need 201 closes to get prev + curr)");
+  const minNeeded = 200 + BARS_TO_CHECK; // 200 for SMA + 10-bar scan window
+  if (closes.length < minNeeded) {
+    throw new Error(
+      `Not enough bars to compute SMA200 scan (need ${minNeeded} closes, got ${closes.length})`
+    );
   }
 
-  const currWindow = closes.slice(-200); // ends at latest close
-  const prevWindow = closes.slice(-201, -1); // ends at prev close
-  const latestPrice = currWindow[currWindow.length - 1];
-  const prevPrice = prevWindow[prevWindow.length - 1];
-  const smaCurr = currWindow.reduce((acc, v) => acc + v, 0) / currWindow.length;
-  const smaPrev = prevWindow.reduce((acc, v) => acc + v, 0) / prevWindow.length;
-  return { smaCurr, smaPrev, latestPrice, prevPrice, recentCloses: closes.slice(-10) };
+  const samples: Array<{
+    offset: number;
+    smaCurr: number;
+    smaPrev: number;
+    latestPrice: number;
+    prevPrice: number;
+    crossedUp: boolean;
+    crossedDown: boolean;
+  }> = [];
+
+  for (let offset = 0; offset < BARS_TO_CHECK; offset++) {
+    const endIdx = closes.length - 1 - offset;
+    const currWindow = closes.slice(endIdx - 199, endIdx + 1); // 200 bars ending at endIdx
+    const prevWindow = closes.slice(endIdx - 200, endIdx); // 200 bars ending at endIdx - 1
+    if (currWindow.length < 200 || prevWindow.length < 200) {
+      break;
+    }
+
+    const latestPrice = currWindow[currWindow.length - 1];
+    const prevPrice = prevWindow[prevWindow.length - 1];
+    const smaCurr =
+      currWindow.reduce((acc, v) => acc + v, 0) / currWindow.length;
+    const smaPrev =
+      prevWindow.reduce((acc, v) => acc + v, 0) / prevWindow.length;
+
+    const crossedUp = prevPrice <= smaPrev && latestPrice > smaCurr;
+    const crossedDown = prevPrice < smaPrev && latestPrice < smaCurr;
+
+    samples.push({
+      offset,
+      smaCurr,
+      smaPrev,
+      latestPrice,
+      prevPrice,
+      crossedUp,
+      crossedDown,
+    });
+  }
+
+  if (samples.length === 0) {
+    throw new Error("Unable to compute any SMA samples");
+  }
+
+  // Most recent sample is offset 0
+  const { smaCurr, smaPrev, latestPrice, prevPrice } = samples[0];
+
+  return {
+    smaCurr,
+    smaPrev,
+    latestPrice,
+    prevPrice,
+    recentCloses: closes.slice(-BARS_TO_CHECK),
+    samples,
+  };
 }
