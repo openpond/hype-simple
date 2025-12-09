@@ -9,6 +9,30 @@ import type { WalletFullContext } from "opentool/wallet";
 const BARS_TO_CHECK = 10; // number of 1m candles to scan each run (10 minutes)
 const MARKET_SLIPPAGE_BPS = 50; // 0.50% buffer to satisfy non-zero price requirement on market orders
 
+function countDecimals(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  const s = value.toString();
+  const [, dec = ""] = s.split(".");
+  return dec.length;
+}
+
+function formatMarketablePrice(
+  mid: number,
+  side: "buy" | "sell",
+  slippageBps: number
+): string {
+  const decimals = countDecimals(mid);
+  const factor = 10 ** decimals;
+  const adjusted =
+    mid *
+    (side === "buy"
+      ? 1 + slippageBps / 10_000
+      : 1 - slippageBps / 10_000);
+  // Round to the observed precision of the feed to respect tick-size-like constraints.
+  const rounded = Math.round(adjusted * factor) / factor;
+  return rounded.toString();
+}
+
 function resolveChainConfig(environment: "mainnet" | "testnet") {
   return environment === "mainnet"
     ? { chain: "arbitrum", rpcUrl: process.env.ARBITRUM_RPC_URL }
@@ -83,8 +107,11 @@ export async function GET(_req: Request): Promise<Response> {
   const actions: Array<() => Promise<void>> = [];
 
   if (crossedDown && hasLong) {
-    const price =
-      signal.latestPrice * (1 - MARKET_SLIPPAGE_BPS / 10_000); // cross down -> sell slightly below to ensure fill
+    const price = formatMarketablePrice(
+      signal.latestPrice,
+      "sell",
+      MARKET_SLIPPAGE_BPS
+    ); // cross down -> sell slightly below to ensure fill
     // Close existing long
     actions.push(async () => {
       await placeHyperliquidOrder({
@@ -105,8 +132,11 @@ export async function GET(_req: Request): Promise<Response> {
   }
 
   if (crossedUp && !hasLong) {
-    const price =
-      signal.latestPrice * (1 + MARKET_SLIPPAGE_BPS / 10_000); // cross up -> buy slightly above to ensure fill
+    const price = formatMarketablePrice(
+      signal.latestPrice,
+      "buy",
+      MARKET_SLIPPAGE_BPS
+    ); // cross up -> buy slightly above to ensure fill
     // Open new long
     actions.push(async () => {
       await placeHyperliquidOrder({
