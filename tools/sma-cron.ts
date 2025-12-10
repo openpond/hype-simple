@@ -3,6 +3,8 @@ import { wallet } from "opentool/wallet";
 import {
   placeHyperliquidOrder,
   fetchHyperliquidClearinghouseState,
+  type HyperliquidOrderResponse,
+  type HyperliquidOrderStatus,
 } from "opentool/adapters/hyperliquid";
 import type { WalletFullContext } from "opentool/wallet";
 
@@ -106,7 +108,35 @@ export async function GET(_req: Request): Promise<Response> {
   const crossedUp = signal.crossedUp;
   const crossedDown = hasLong && signal.crossedDown;
 
-  const actions: Array<() => Promise<void>> = [];
+  const extractOrderIds = (responses: HyperliquidOrderResponse[]) => {
+    const cloids = new Set<string>();
+    const oids = new Set<string>();
+    const push = (val: unknown, target: Set<string>) => {
+      if (val === null || val === undefined) return;
+      const str = String(val);
+      if (str.length) target.add(str);
+    };
+    for (const res of responses) {
+      const statuses = (res as any)?.response?.data?.statuses as
+        | HyperliquidOrderStatus[]
+        | undefined;
+      if (!Array.isArray(statuses)) continue;
+      for (const status of statuses) {
+        const resting = (status as any).resting;
+        const filled = (status as any).filled;
+        push(resting?.cloid, cloids);
+        push(resting?.oid, oids);
+        push(filled?.cloid, cloids);
+        push(filled?.oid, oids);
+      }
+    }
+    return {
+      cloids: Array.from(cloids),
+      oids: Array.from(oids),
+    };
+  };
+
+  const actions: Array<() => Promise<HyperliquidOrderResponse>> = [];
 
   if (crossedDown && hasLong) {
     const price = formatMarketablePrice(
@@ -116,7 +146,7 @@ export async function GET(_req: Request): Promise<Response> {
     ); // cross down -> sell slightly below to ensure fill
     // Close existing long
     actions.push(async () => {
-      await placeHyperliquidOrder({
+      return await placeHyperliquidOrder({
         wallet: ctx as WalletFullContext,
         environment,
         orders: [
@@ -141,7 +171,7 @@ export async function GET(_req: Request): Promise<Response> {
     ); // cross up -> buy slightly above to ensure fill
     // Open new long
     actions.push(async () => {
-      await placeHyperliquidOrder({
+      return await placeHyperliquidOrder({
         wallet: ctx as WalletFullContext,
         environment,
         orders: [
@@ -158,14 +188,22 @@ export async function GET(_req: Request): Promise<Response> {
     });
   }
 
+  const orderResponses: HyperliquidOrderResponse[] = [];
   for (const act of actions) {
-    await act();
+    const res = await act();
+    orderResponses.push(res);
   }
+
+  const orderIds = extractOrderIds(orderResponses);
+  const ref =
+    orderIds.cloids[0] ??
+    orderIds.oids[0] ??
+    `sma-${symbol}-${Date.now()}`;
 
   // Record outcome
   await store({
     source: "hyperliquid",
-    ref: `sma-${symbol}-${Date.now()}`,
+    ref,
     status: actions.length ? "submitted" : "info",
     walletAddress: ctx.address,
     action: actions.length ? "order" : "noop",
@@ -186,6 +224,8 @@ export async function GET(_req: Request): Promise<Response> {
       signalOffsetMinutes: signal.offset,
       samplesChecked: samples.length,
       limitPriceUsed: actions.length ? signal.latestPrice : undefined,
+      orderIds,
+      orderResponses: orderResponses.length ? orderResponses : undefined,
     },
   });
 
