@@ -1,0 +1,22 @@
+{
+  "metadataSpecVersion": "1.1.0",
+  "name": "hyperliquid-200-sma",
+  "displayName": "Hyperliquid 200 SMA",
+  "version": "1.0.0",
+  "description": "Hyperliquid 1m - 200 SMA 10m cadence strategy",
+  "category": "internal",
+  "tools": [
+    {
+      "name": "sma-cron",
+      "description": "sma-cron tool"
+    }
+  ],
+  "discovery": {
+    "keywords": [
+      "hyperliquid",
+      "simple",
+      "opentool"
+    ],
+    "category": "internal-tools"
+  }
+}

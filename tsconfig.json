@@ -11,5 +11,11 @@
     "allowSyntheticDefaultImports": true,
     "types": ["node"]
   },
-  "include": ["tools/**/*.ts", "metadata.ts", "utils.ts", "hyperliquid.ts"]
+  "include": [
+    "tools/**/*.ts",
+    "src/**/*.ts",
+    "metadata.ts",
+    "utils.ts",
+    "hyperliquid.ts"
+  ]
 }
