@@ -1,7 +1,7 @@
 {
-  "name": "opentool-example",
+  "name": "hyperliquid-200-sma",
   "version": "1.0.0",
-  "description": "Example OpenTool project",
+  "description": "Hyperliquid 1m - 200 SMA 10m cadence strategy",
   "scripts": {
     "dev": "opentool dev",
     "build": "opentool build --input tools --output dist",
